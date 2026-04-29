@@ -2,6 +2,7 @@ import "./src/config/env.js";
 import express from 'express';
 import logger from "./src/config/logger.js";
 import authRoutes from './src/modules/auth/auth.routes.js';
+import transactionRoutes from './src/modules/transaction/transaction.routes.js';
 
 const app = express();
 
@@ -20,6 +21,7 @@ app.get('/health', (req, res) => {
 
 // API routes
 app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/transactions', transactionRoutes);
 
 // 404 handler
 app.use((_req, res) => {
