@@ -29,11 +29,20 @@ services:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
+    command: ["--replSet", "rs0", "--bind_ip_all"]
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test: |
+        mongosh --eval "
+          try {
+            rs.status();
+          } catch(e) {
+            rs.initiate({_id:'rs0', members:[{_id:0, host:'mongo:27017'}]});
+          }
+        "
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout: 10s
+      retries: 10
+      start_period: 30s
     networks:
       - spinwheel_net
   
