@@ -1,0 +1,62 @@
+version: '3.9'
+
+services:
+  app:
+    build: .
+    container_name: spinwheel_app
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+      - /app/node_modules
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: npm run dev
+    networks:
+      - spinwheel_net
+  
+  mongo:
+    image: mongo:7
+    container_name: spinwheel_mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - spinwheel_net
+  
+
+  redis:
+    image: redis:7-alpine
+    container_name: spinwheel_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - spinwheel_net
+
+volumes:
+  mongo_data:
+  redis_data:
+
+networks:
+  spinwheel_net:
+    driver: bridge
