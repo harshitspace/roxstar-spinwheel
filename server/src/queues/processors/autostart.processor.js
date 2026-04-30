@@ -3,6 +3,7 @@ import logger from '../../config/logger.js';
 import SpinWheel from '../../models/SpinWheel.model.js';
 import * as coinService from '../../modules/coin/coin.service.js';
 import eliminationQueue from '../elimination.queue.js';
+import { assertValidTransition } from '../../utils/stateMachine.js';
 import {
   emitWheelAborted,
   emitWheelStarted,
@@ -20,6 +21,7 @@ export const processAutoStart = async (job) => {
 
     if (!wheel) throw new Error(`Wheel ${wheelId} not found`);
 
+    // Guard: if admin already started manually, nothing to do
     if (wheel.status !== 'WAITING') {
       await session.abortTransaction();
       session.endSession();
@@ -32,9 +34,16 @@ export const processAutoStart = async (job) => {
     if (activeParticipants.length < 3) {
       logger.warn(`[AutoStartProcessor] Only ${activeParticipants.length} participants — aborting`);
 
+      // Validate state transition before applying
+      assertValidTransition(wheel.status, 'ABORTED');
+
       await coinService.refundAll(wheelId, activeParticipants, wheel.entryFee, session);
 
-      await SpinWheel.findByIdAndUpdate(wheelId, { status: 'ABORTED' }, { session });
+      await SpinWheel.findByIdAndUpdate(
+        wheelId,
+        { status: 'ABORTED' },
+        { session }
+      );
 
       await session.commitTransaction();
       session.endSession();
@@ -45,15 +54,23 @@ export const processAutoStart = async (job) => {
         refundAmount:     wheel.entryFee,
       });
 
+      logger.info(`[AutoStartProcessor] Wheel ${wheelId} aborted and refunds issued`);
       return;
     }
 
+    // Enough participants — validate transition and start
+    assertValidTransition(wheel.status, 'SPINNING');
+
     const userIds = activeParticipants.map(p => p.userId);
-    const shuffled = userIds.sort(() => Math.random() - 0.5);
+    const shuffled = [...userIds].sort(() => Math.random() - 0.5);
 
     await SpinWheel.findByIdAndUpdate(
       wheelId,
-      { status: 'SPINNING', startedAt: new Date(), eliminationSequence: shuffled },
+      {
+        status: 'SPINNING',
+        startedAt: new Date(),
+        eliminationSequence: shuffled,
+      },
       { session }
     );
 
