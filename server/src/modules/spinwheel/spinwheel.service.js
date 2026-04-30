@@ -8,6 +8,8 @@ import User from '../../models/User.model.js';
 import autoStartQueue from '../../queues/autostart.queue.js';
 import eliminationQueue from '../../queues/elimination.queue.js';
 import ApiError from '../../utils/ApiError.js';
+import { withLock } from '../../utils/redisLock.js';
+import { assertValidTransition } from '../../utils/stateMachine.js';
 import {
   emitParticipantJoined,
   emitWheelStarted,
@@ -53,7 +55,7 @@ export const createWheel = async (adminId, { entryFee, maxParticipants }) => {
       autoStartJobId: job.id.toString(),
     });
 
-    logger.info(`[SpinWheelService] Wheel created: ${wheel._id}`);
+    logger.info(`[SpinWheelService] Wheel created: ${wheel._id}, auto-start job: ${job.id}`);
     return wheel;
 
   } catch (err) {
@@ -64,59 +66,65 @@ export const createWheel = async (adminId, { entryFee, maxParticipants }) => {
 };
 
 export const joinWheel = async (userId, wheelId) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+  const userWheelLockKey = `lock:join:${userId}:${wheelId}`;
+  const wheelSlotLockKey = `lock:wheel_slot:${wheelId}`;
 
-  try {
-    const wheel = await SpinWheel.findById(wheelId).session(session);
+  return withLock(userWheelLockKey, 10, () =>
+    withLock(wheelSlotLockKey, 10, async () => {
 
-    if (!wheel) throw new ApiError(404, 'Spin wheel not found.');
-    if (wheel.status !== 'WAITING') {
-      throw new ApiError(400, `Cannot join a wheel in ${wheel.status} status.`);
-    }
-    if (wheel.participants.length >= wheel.maxParticipants) {
-      throw new ApiError(400, 'This wheel is full.');
-    }
+      const session = await mongoose.startSession();
+      session.startTransaction();
 
-    const alreadyJoined = wheel.participants.some(
-      p => p.userId.toString() === userId.toString()
-    );
-    if (alreadyJoined) throw new ApiError(409, 'You have already joined this wheel.');
+      try {
+        const wheel = await SpinWheel.findById(wheelId).session(session);
 
-    const { winnerShare, adminShare, appShare } = await coinService.distributeEntryFee(
-      userId,
-      wheelId,
-      wheel.entryFee,
-      session
-    );
+        if (!wheel) throw new ApiError(404, 'Spin wheel not found.');
+        if (wheel.status !== 'WAITING') {
+          throw new ApiError(400, `Cannot join a wheel in ${wheel.status} status.`);
+        }
+        if (wheel.participants.length >= wheel.maxParticipants) {
+          throw new ApiError(400, 'This wheel is full.');
+        }
 
-    const updated = await spinWheelRepo.addParticipant(
-      wheelId,
-      { userId, joinedAt: new Date() },
-      { winnerPool: winnerShare, adminPool: adminShare, appPool: appShare },
-      session
-    );
+        const alreadyJoined = wheel.participants.some(
+          p => p.userId.toString() === userId.toString()
+        );
+        if (alreadyJoined) throw new ApiError(409, 'You have already joined this wheel.');
 
-    await session.commitTransaction();
-    session.endSession();
+        const { winnerShare, adminShare, appShare } = await coinService.distributeEntryFee(
+          userId,
+          wheelId,
+          wheel.entryFee,
+          session
+        );
 
-    // Fetch user details for the socket payload
-    const user = await User.findById(userId).select('name');
+        const updated = await spinWheelRepo.addParticipant(
+          wheelId,
+          { userId, joinedAt: new Date() },
+          { winnerPool: winnerShare, adminPool: adminShare, appPool: appShare },
+          session
+        );
 
-    // Emit to everyone already in the room
-    emitParticipantJoined(wheelId, {
-      userId,
-      name:             user?.name || 'Unknown',
-      participantCount: updated.participants.length,
-    });
+        await session.commitTransaction();
+        session.endSession();
 
-    return updated;
+        const user = await User.findById(userId).select('name');
+        emitParticipantJoined(wheelId, {
+          userId,
+          name:             user?.name || 'Unknown',
+          participantCount: updated.participants.length,
+        });
 
-  } catch (err) {
-    await session.abortTransaction();
-    session.endSession();
-    throw err;
-  }
+        logger.info(`[SpinWheelService] User ${userId} joined wheel ${wheelId}`);
+        return updated;
+
+      } catch (err) {
+        await session.abortTransaction();
+        session.endSession();
+        throw err;
+      }
+    })
+  );
 };
 
 export const startWheel = async (wheelId, adminId) => {
@@ -127,12 +135,12 @@ export const startWheel = async (wheelId, adminId) => {
     const wheel = await SpinWheel.findById(wheelId).session(session);
 
     if (!wheel) throw new ApiError(404, 'Spin wheel not found.');
-    if (wheel.status !== 'WAITING') {
-      throw new ApiError(400, `Wheel is already in ${wheel.status} status.`);
-    }
     if (wheel.createdBy.toString() !== adminId.toString()) {
       throw new ApiError(403, 'Only the admin who created this wheel can start it.');
     }
+
+    // State machine validates this — throws 400 if not WAITING
+    assertValidTransition(wheel.status, 'SPINNING');
 
     const activeParticipants = wheel.participants.filter(p => !p.isEliminated);
     if (activeParticipants.length < 3) {
@@ -144,24 +152,28 @@ export const startWheel = async (wheelId, adminId) => {
 
     await SpinWheel.findByIdAndUpdate(
       wheelId,
-      { status: 'SPINNING', startedAt: new Date(), eliminationSequence: shuffled },
+      {
+        status: 'SPINNING',
+        startedAt: new Date(),
+        eliminationSequence: shuffled,
+      },
       { session }
     );
 
     await session.commitTransaction();
     session.endSession();
 
-    // Remove auto-start job since admin started manually
+    // Remove the pending auto-start job
     if (wheel.autoStartJobId) {
       try {
         const job = await autoStartQueue.getJob(wheel.autoStartJobId);
         if (job) await job.remove();
+        logger.info(`[SpinWheelService] Removed auto-start job ${wheel.autoStartJobId}`);
       } catch (e) {
         logger.warn(`[SpinWheelService] Could not remove auto-start job: ${e.message}`);
       }
     }
 
-    // Emit wheel started to all participants in the room
     emitWheelStarted(wheelId, {
       participantCount: activeParticipants.length,
     });
@@ -175,7 +187,7 @@ export const startWheel = async (wheelId, adminId) => {
       eliminationJobId: elimJob.id.toString(),
     });
 
-    logger.info(`[SpinWheelService] Wheel ${wheelId} started by admin ${adminId}`);
+    logger.info(`[SpinWheelService] Wheel ${wheelId} manually started by admin ${adminId}`);
     return wheel;
 
   } catch (err) {

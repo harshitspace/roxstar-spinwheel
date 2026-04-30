@@ -17,6 +17,7 @@
     "bull": "^4.16.5",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.4.1",
     "ioredis": "^5.10.1",
     "joi": "^18.1.2",
     "jsonwebtoken": "^9.0.3",

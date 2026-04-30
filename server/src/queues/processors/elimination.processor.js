@@ -3,6 +3,7 @@ import logger from '../../config/logger.js';
 import SpinWheel from '../../models/SpinWheel.model.js';
 import User from '../../models/User.model.js';
 import * as coinService from '../../modules/coin/coin.service.js';
+import { assertValidTransition } from '../../utils/stateMachine.js';
 import {
   emitElimination,
   emitWheelCompleted,
@@ -32,6 +33,8 @@ export const processElimination = async (job) => {
       const winner = activeParticipants[0];
       const winnerUser = await User.findById(winner.userId).select('name');
 
+      assertValidTransition(wheel.status, 'COMPLETED');
+
       await coinService.payoutWinner(
         winner.userId,
         wheel.createdBy,
@@ -43,7 +46,11 @@ export const processElimination = async (job) => {
 
       await SpinWheel.findByIdAndUpdate(
         wheelId,
-        { status: 'COMPLETED', winnerId: winner.userId, completedAt: new Date() },
+        {
+          status: 'COMPLETED',
+          winnerId: winner.userId,
+          completedAt: new Date(),
+        },
         { session }
       );
 
@@ -61,8 +68,7 @@ export const processElimination = async (job) => {
       return;
     }
 
-    // Pick the next person to eliminate from the persisted sequence
-    // sequence index = round - 1
+    // Pick next to eliminate from the persisted sequence
     const eliminatedUserId = wheel.eliminationSequence[round - 1];
 
     if (!eliminatedUserId) {
@@ -75,8 +81,8 @@ export const processElimination = async (job) => {
       { _id: wheelId, 'participants.userId': eliminatedUserId },
       {
         $set: {
-          'participants.$.isEliminated':    true,
-          'participants.$.eliminatedAt':    new Date(),
+          'participants.$.isEliminated':     true,
+          'participants.$.eliminatedAt':     new Date(),
           'participants.$.eliminationRound': round,
         },
       },
@@ -93,12 +99,14 @@ export const processElimination = async (job) => {
       remainingCount:  activeParticipants.length - 1,
     });
 
-    // Queue the next round
+    // Queue next round
     const { default: eliminationQueue } = await import('../elimination.queue.js');
     await eliminationQueue.add(
       { wheelId, round: round + 1 },
       { delay: 7000, attempts: 3, backoff: { type: 'fixed', delay: 2000 } }
     );
+
+    logger.info(`[EliminationProcessor] Round ${round} done — eliminated ${eliminatedUserId}`);
 
   } catch (err) {
     await session.abortTransaction();

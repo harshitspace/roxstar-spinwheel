@@ -4,6 +4,8 @@ import logger from "./src/config/logger.js";
 import authRoutes from './src/modules/auth/auth.routes.js';
 import transactionRoutes from './src/modules/transaction/transaction.routes.js';
 import spinWheelRoutes from './src/modules/spinwheel/spinwheel.routes.js';
+import autoStartQueue from './src/queues/autostart.queue.js';
+import eliminationQueue from './src/queues/elimination.queue.js';
 
 const app = express();
 
@@ -16,8 +18,20 @@ app.use((req, res, next) => {
     next();
 });
 
-app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'ok' });
+app.get('/health', async (_req, res) => {
+  const [autoStartCounts, eliminationCounts] = await Promise.all([
+    autoStartQueue.getJobCounts(),
+    eliminationQueue.getJobCounts(),
+  ]);
+
+  res.status(200).json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    queues: {
+      autoStart:   autoStartCounts,
+      elimination: eliminationCounts,
+    },
+  });
 });
 
 // API routes
