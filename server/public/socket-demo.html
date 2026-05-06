@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>RoxStar SpinWheel — Socket Demo</title>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #0f0f13;
+      color: #e0e0e0;
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    h1 { color: #a78bfa; font-size: 1.6rem; margin-bottom: 4px; }
+    .subtitle { color: #666; font-size: 0.85rem; margin-bottom: 24px; }
+
+    /* ── FIXED: grid and banner now same width, full page width ── */
+    .page-wrap {
+      width: 100%;
+    }
+
+    .winner-banner {
+      display: none;
+      background: linear-gradient(135deg, #052e16, #064e3b);
+      border: 2px solid #10b981;
+      border-radius: 12px;
+      padding: 16px 24px;
+      margin-bottom: 16px;
+      text-align: center;
+      animation: fadeIn 0.5s ease;
+      width: 100%;
+    }
+    .winner-banner.show { display: block; }
+    .winner-banner h3 { color: #34d399; font-size: 1.2rem; margin-bottom: 4px; }
+    .winner-banner p  { color: #6ee7b7; font-size: 0.85rem; }
+
+    /* ── FIXED: grid stretches full width ── */
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      width: 100%;
+    }
+
+    @media (max-width: 700px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: #1a1a24;
+      border: 1px solid #2a2a3a;
+      border-radius: 12px;
+      padding: 20px;
+    }
+
+    .card h2 {
+      font-size: 0.9rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #888;
+      margin-bottom: 14px;
+    }
+
+    input {
+      width: 100%;
+      background: #0f0f13;
+      border: 1px solid #2a2a3a;
+      border-radius: 8px;
+      color: #e0e0e0;
+      padding: 10px 12px;
+      font-size: 0.9rem;
+      margin-bottom: 10px;
+      outline: none;
+    }
+    input:focus { border-color: #a78bfa; }
+
+    button {
+      padding: 10px 18px;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 600;
+      transition: opacity 0.2s;
+      margin-right: 8px;
+      margin-bottom: 8px;
+    }
+    button:hover { opacity: 0.85; }
+    button:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    .btn-purple { background: #7c3aed; color: white; }
+    .btn-green  { background: #059669; color: white; }
+    .btn-blue   { background: #2563eb; color: white; }
+    .btn-gray   { background: #374151; color: white; }
+
+    .status-dot {
+      display: inline-block;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      margin-right: 8px;
+      background: #dc2626;
+      transition: background 0.3s;
+    }
+    .status-dot.connected { background: #10b981; }
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      font-size: 0.85rem;
+      margin-bottom: 14px;
+      padding: 10px 14px;
+      background: #0f0f13;
+      border-radius: 8px;
+      border: 1px solid #2a2a3a;
+    }
+
+    .wheel-status {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      margin-left: 10px;
+    }
+    .status-WAITING   { background: #1e3a5f; color: #60a5fa; }
+    .status-SPINNING  { background: #451a03; color: #fb923c; }
+    .status-COMPLETED { background: #052e16; color: #34d399; }
+    .status-ABORTED   { background: #27272a; color: #9ca3af; }
+    .status-none      { background: #1a1a24; color: #6b7280; }
+
+    /* ── EVENT LOG ── */
+    .event-log {
+      height: 280px;
+      overflow-y: auto;
+      background: #0f0f13;
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 0.8rem;
+      font-family: monospace;
+      border: 1px solid #2a2a3a;
+    }
+    .event-log::-webkit-scrollbar { width: 4px; }
+    .event-log::-webkit-scrollbar-thumb { background: #374151; border-radius: 4px; }
+
+    .log-entry {
+      padding: 6px 8px;
+      border-radius: 6px;
+      margin-bottom: 6px;
+      border-left: 3px solid;
+      animation: fadeIn 0.3s ease;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .log-entry .time  { color: #555; font-size: 0.75rem; }
+    .log-entry .event { font-weight: 700; margin: 2px 0; }
+    .log-entry .data  { color: #9ca3af; font-size: 0.75rem; word-break: break-all; }
+
+    .log-connected   { background: #052e16; border-color: #10b981; }
+    .log-joined      { background: #1e1b4b; border-color: #6366f1; }
+    .log-started     { background: #1c1917; border-color: #f59e0b; }
+    .log-elimination { background: #1f1315; border-color: #ef4444; }
+    .log-completed   { background: #052e16; border-color: #10b981; }
+    .log-aborted     { background: #27272a; border-color: #6b7280; }
+    .log-error       { background: #2d0a0a; border-color: #dc2626; }
+    .log-info        { background: #0f172a; border-color: #3b82f6; }
+
+    /* ── PARTICIPANTS ── */
+    .participants-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      min-height: 60px;
+    }
+
+    /* ── FIXED: chip shows name clearly, no ID showing ── */
+    .participant-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px 6px 8px;
+      border-radius: 24px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      background: #1e1b4b;
+      border: 1px solid #4c1d95;
+      color: #c4b5fd;
+      transition: all 0.35s;
+      cursor: default;
+    }
+
+    .chip-avatar {
+      width: 24px; height: 24px;
+      border-radius: 50%;
+      background: #4c1d95;
+      color: #e9d5ff;
+      font-size: 0.7rem;
+      font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .chip-name {
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .participant-chip.eliminated {
+      background: #1f1315;
+      border-color: #7f1d1d;
+      color: #6b7280;
+      opacity: 0.65;
+    }
+    .participant-chip.eliminated .chip-avatar {
+      background: #450a0a;
+      color: #9ca3af;
+    }
+    .participant-chip.eliminated .chip-name {
+      text-decoration: line-through;
+    }
+
+    .participant-chip.winner {
+      background: linear-gradient(135deg, #052e16, #064e3b);
+      border: 2px solid #10b981;
+      color: #34d399;
+      animation: winnerPulse 1.5s ease-in-out infinite;
+    }
+    .participant-chip.winner .chip-avatar {
+      background: #065f46;
+      color: #34d399;
+      font-size: 0.85rem;
+    }
+    @keyframes winnerPulse {
+      0%, 100% { box-shadow: 0 0 10px rgba(16,185,129,0.3); }
+      50%       { box-shadow: 0 0 22px rgba(16,185,129,0.65); }
+    }
+
+    .elim-tag {
+      font-size: 0.65rem;
+      background: #7f1d1d;
+      color: #fca5a5;
+      padding: 1px 5px;
+      border-radius: 6px;
+      margin-left: 2px;
+    }
+
+    /* ── POOLS ── */
+    .pool-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid #2a2a3a;
+      font-size: 0.85rem;
+    }
+    .pool-row:last-child { border-bottom: none; }
+    .pool-label { color: #9ca3af; }
+    .pool-value { color: #a78bfa; font-weight: 700; font-family: monospace; }
+
+    .clear-btn {
+      float: right;
+      padding: 4px 10px;
+      font-size: 0.75rem;
+      background: #374151;
+      color: #9ca3af;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-bottom: 8px;
+    }
+
+    .token-display {
+      font-size: 0.7rem;
+      color: #4b5563;
+      word-break: break-all;
+      margin-top: 4px;
+      font-family: monospace;
+    }
+
+    .full-width { grid-column: 1 / -1; }
+    .participant-count-label {
+      color: #555;
+      font-weight: 400;
+      font-size: 0.8rem;
+      margin-left: 6px;
+    }
+  </style>
+</head>
+<body>
+
+<h1>🎡 RoxStar SpinWheel</h1>
+<p class="subtitle">Real-time Socket.io Demo — Connect, join a wheel, and watch live events</p>
+
+<div class="page-wrap">
+
+  <!-- Winner Banner — same width as grid -->
+  <div id="winnerBanner" class="winner-banner">
+    <h3 id="winnerBannerText">🏆 Winner!</h3>
+    <p  id="winnerBannerSub"></p>
+  </div>
+
+  <div class="grid">
+
+    <!-- 1. CONNECT -->
+    <div class="card">
+      <h2>1. Connect to Socket</h2>
+      <div class="status-bar">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusText">Disconnected</span>
+        <span id="wheelStatusBadge" class="wheel-status status-none">No Wheel</span>
+      </div>
+      <input type="text" id="serverUrl" value="http://localhost:3000" placeholder="Server URL"/>
+      <input type="text" id="jwtToken" placeholder="Paste JWT token here (or use Quick Login)"/>
+      <div class="token-display" id="tokenPreview">No token set</div>
+      <br/>
+      <button class="btn-purple" onclick="connect()">Connect</button>
+      <button class="btn-gray"   onclick="disconnect()">Disconnect</button>
+    </div>
+
+    <!-- 2. QUICK LOGIN -->
+    <div class="card">
+      <h2>2. Quick Login</h2>
+      <input type="text"     id="loginEmail"    value="alice@spinwheel.com" placeholder="User Email"/>
+      <input type="password" id="loginPassword" value="user1234"            placeholder="Password"/>
+      <button class="btn-blue" onclick="quickLogin()">Login + Fill Token</button>
+      <br/><br/>
+      <input type="text"     id="adminEmail"    value="admin@spinwheel.com" placeholder="Admin Email"/>
+      <input type="password" id="adminPassword" value="admin123"            placeholder="Admin Password"/>
+      <button class="btn-purple" onclick="quickAdminLogin()">Admin Login</button>
+      <p style="font-size:0.75rem;color:#555;margin-top:8px">
+        💡 Login as user first, then as admin. Both tokens are stored separately.
+      </p>
+    </div>
+
+    <!-- 3. WHEEL ACTIONS -->
+    <div class="card">
+      <h2>3. Wheel Actions</h2>
+      <input type="text"   id="wheelId"        placeholder="Wheel ID (auto-filled after create)"/>
+      <input type="number" id="entryFee"        value="100" placeholder="Entry Fee (coins)"/>
+      <input type="number" id="maxParticipants" value="10"  placeholder="Max Participants"/>
+      <br/>
+      <button class="btn-green"  onclick="createWheel()">Create Wheel (Admin)</button>
+      <button class="btn-blue"   onclick="joinWheelAndSubscribe()">Join Wheel</button>
+      <button class="btn-green"  onclick="startWheel()">Start Wheel (Admin)</button>
+      <button class="btn-gray"   onclick="getWheelStatus()">Refresh Status</button>
+      <p style="font-size:0.75rem;color:#555;margin-top:8px">
+        💡 Joining automatically subscribes you to live events for this wheel.
+      </p>
+    </div>
+
+    <!-- 4. LIVE PARTICIPANTS -->
+    <div class="card">
+      <h2>
+        4. Live Participants
+        <span class="participant-count-label" id="participantCount"></span>
+      </h2>
+      <div class="participants-grid" id="participantsGrid">
+        <span style="color:#555;font-size:0.8rem">No participants yet...</span>
+      </div>
+      <br/>
+      <div class="pool-row">
+        <span class="pool-label">🏆 Winner Pool</span>
+        <span class="pool-value" id="winnerPool">0 coins</span>
+      </div>
+      <div class="pool-row">
+        <span class="pool-label">👤 Admin Pool</span>
+        <span class="pool-value" id="adminPool">0 coins</span>
+      </div>
+      <div class="pool-row">
+        <span class="pool-label">⚡ Current Round</span>
+        <span class="pool-value" id="currentRound">—</span>
+      </div>
+    </div>
+
+    <!-- 5. LIVE EVENT LOG -->
+    <div class="card full-width">
+      <h2>
+        Live Event Log
+        <button class="clear-btn" onclick="clearLog()">Clear</button>
+      </h2>
+      <div class="event-log" id="eventLog">
+        <div style="color:#555;font-size:0.8rem;padding:8px">
+          Connect and join a wheel to see live events appear here...
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /.grid -->
+</div><!-- /.page-wrap -->
+
+<script>
+  let socket            = null;
+  let currentToken      = null;
+  let currentAdminToken = null;
+
+  // participants map: { [userId]: { displayName, eliminated, winner } }
+  let participants = {};
+
+  const serverUrl  = () => document.getElementById('serverUrl').value.trim();
+  const getWheelId = () => document.getElementById('wheelId').value.trim();
+
+  // ─── NAME RESOLVER ────────────────────────────────────────────────────────
+  // Priority: name → email prefix → last 6 chars of id
+  function resolveName(name, email, id) {
+    if (name  && name.trim()  !== '' && name  !== 'Unknown') return name.trim();
+    if (email && email.trim() !== '')                         return email.split('@')[0];
+    return (id || '').toString().slice(-6) || '?';
+  }
+
+  function getInitials(displayName) {
+    const s = (displayName || '?').trim();
+    const parts = s.split(' ');
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return s.slice(0, 2).toUpperCase();
+  }
+
+  // ─── LOGGING ──────────────────────────────────────────────────────────────
+  function log(eventName, data, type = 'info') {
+    const logEl = document.getElementById('eventLog');
+    const entry = document.createElement('div');
+    entry.className = `log-entry log-${type}`;
+    const time = new Date().toLocaleTimeString('en-IN', { hour12: false });
+    entry.innerHTML = `
+      <div class="time">${time}</div>
+      <div class="event">${eventName}</div>
+      <div class="data">${JSON.stringify(data, null, 2)}</div>
+    `;
+    logEl.prepend(entry);
+  }
+
+  function clearLog() { document.getElementById('eventLog').innerHTML = ''; }
+
+  // ─── CONNECTION ───────────────────────────────────────────────────────────
+  function connect() {
+    const token = document.getElementById('jwtToken').value.trim();
+    if (!token) { alert('Paste a JWT token first, or use Quick Login.'); return; }
+    if (socket) socket.disconnect();
+    currentToken = token;
+
+    socket = io(serverUrl(), {
+      auth: { token },
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+    });
+
+    socket.on('connect', () => {
+      setConnectionStatus(true);
+      log('✅ Socket connected', { socketId: socket.id }, 'connected');
+    });
+    socket.on('disconnect', (reason) => {
+      setConnectionStatus(false);
+      log('❌ Disconnected', { reason }, 'error');
+    });
+    socket.on('connect_error', (err) => {
+      setConnectionStatus(false);
+      log('🚫 Connection failed', { message: err.message }, 'error');
+    });
+
+    // ── WHEEL EVENTS ──────────────────────────────────────────────────────
+
+    socket.on('wheel:room_joined', (data) => {
+      log('🚪 Subscribed to wheel room', data, 'info');
+    });
+
+    socket.on('wheel:participant_joined', (data) => {
+      // Server sends: { userId, name, email?, participantCount }
+      const id   = (data.userId || '').toString();
+      const name = resolveName(data.name, data.email, id);
+      log(`👤 ${name} joined`, { name, participantCount: data.participantCount }, 'joined');
+      setParticipant(id, name, false, false);
+      refreshPoolsFromAPI();
+    });
+
+    socket.on('wheel:started', (data) => {
+      log('🎡 Wheel started — first elimination in 7s', data, 'started');
+      setWheelStatus('SPINNING');
+      document.getElementById('currentRound').textContent = '1';
+      hideBanner();
+    });
+
+    socket.on('wheel:elimination', (data) => {
+      const id   = (data.eliminatedUserId || '').toString();
+      const name = resolveName(data.eliminatedName, null, id);
+      log(`💀 Round ${data.round} — ${name} eliminated | ${data.remainingCount} left`, data, 'elimination');
+      document.getElementById('currentRound').textContent = data.round;
+
+      // Mark eliminated
+      if (participants[id]) {
+        participants[id].eliminated = true;
+        participants[id].winner     = false;
+      } else {
+        participants[id] = { displayName: name, eliminated: true, winner: false };
+      }
+
+      // Crown winner immediately when only 1 survives — don't wait for wheel:completed
+      const surviving = Object.entries(participants).filter(([, p]) => !p.eliminated && !p.winner);
+      if (surviving.length === 1) {
+        const [wId, wData] = surviving[0];
+        participants[wId].winner = true;
+        log(`🏆 ${wData.displayName} is the last one standing!`, { winner: wData.displayName }, 'completed');
+      }
+
+      renderParticipants();
+    });
+
+    socket.on('wheel:completed', (data) => {
+      const id   = (data.winnerId || '').toString();
+      const name = resolveName(data.winnerName, null, id);
+      log(`🏆 ${name} wins ${data.prize} coins!`, data, 'completed');
+      setWheelStatus('COMPLETED');
+
+      // Ensure winner is crowned (may already be from elimination event)
+      Object.values(participants).forEach(p => { p.winner = false; });
+      if (participants[id]) {
+        participants[id].winner     = true;
+        participants[id].eliminated = false;
+        participants[id].displayName = name; // update with server-confirmed name
+      }
+
+      document.getElementById('winnerPool').textContent = `${data.prize} coins`;
+      document.getElementById('adminPool').textContent  = `${data.adminPayout} coins`;
+      renderParticipants();
+      showBanner(name, data.prize);
+    });
+
+    socket.on('wheel:aborted', (data) => {
+      log('🚫 Wheel aborted — entry fees refunded', data, 'aborted');
+      setWheelStatus('ABORTED');
+      hideBanner();
+    });
+  }
+
+  function disconnect() {
+    if (socket) { socket.disconnect(); socket = null; }
+    setConnectionStatus(false);
+  }
+
+  function subscribeToRoom(wheelId) {
+    if (!socket || !socket.connected) return;
+    socket.emit('join:wheel', wheelId);
+    log('📡 Subscribed to wheel room', { room: `wheel:${wheelId}` }, 'info');
+  }
+
+  // ─── QUICK LOGIN ──────────────────────────────────────────────────────────
+  async function quickLogin() {
+    await loginAndStore(
+      document.getElementById('loginEmail').value.trim(),
+      document.getElementById('loginPassword').value.trim(),
+      false
+    );
+  }
+  async function quickAdminLogin() {
+    await loginAndStore(
+      document.getElementById('adminEmail').value.trim(),
+      document.getElementById('adminPassword').value.trim(),
+      true
+    );
+  }
+  async function loginAndStore(email, password, isAdmin) {
+    try {
+      const res  = await fetch(`${serverUrl()}/api/v1/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const json = await res.json();
+      const token = json?.data?.token || json?.data?.data?.token;
+      if (!token) { log('Login failed', json, 'error'); return; }
+
+      if (isAdmin) {
+        currentAdminToken = token;
+        log('🔑 Admin logged in', { email }, 'info');
+      } else {
+        currentToken = token;
+        document.getElementById('jwtToken').value = token;
+        document.getElementById('tokenPreview').textContent = token.slice(0, 60) + '...';
+        log('🔑 User logged in', { email }, 'info');
+      }
+    } catch (err) {
+      log('Login error', { message: err.message }, 'error');
+    }
+  }
+
+  // ─── API WRAPPER ──────────────────────────────────────────────────────────
+  async function apiCall(method, path, body, useAdmin = false) {
+    const token = useAdmin ? currentAdminToken : currentToken;
+    if (!token) { alert(useAdmin ? 'Admin not logged in.' : 'User not logged in.'); return null; }
+    try {
+      const res = await fetch(`${serverUrl()}${path}`, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      return res.json();
+    } catch (err) {
+      log('API Error', { message: err.message }, 'error');
+      return null;
+    }
+  }
+
+  // ─── WHEEL ACTIONS ────────────────────────────────────────────────────────
+  async function createWheel() {
+    const entryFee        = parseInt(document.getElementById('entryFee').value);
+    const maxParticipants = parseInt(document.getElementById('maxParticipants').value);
+    const json = await apiCall('POST', '/api/v1/spinwheel', { entryFee, maxParticipants }, true);
+    if (json?.data?._id) {
+      document.getElementById('wheelId').value = json.data._id;
+      setWheelStatus('WAITING');
+      resetGameState();
+      subscribeToRoom(json.data._id);
+      log('✅ Wheel created + subscribed', { wheelId: json.data._id }, 'info');
+    } else {
+      log('Create Wheel failed', json, 'error');
+    }
+  }
+
+  async function joinWheelAndSubscribe() {
+    const wheelId = getWheelId();
+    if (!wheelId) { alert('Create a wheel first or enter a Wheel ID.'); return; }
+    const json = await apiCall('POST', `/api/v1/spinwheel/${wheelId}/join`, null, false);
+    if (json?.success && json.data) {
+      updatePoolsFromWheel(json.data);
+      loadParticipantsFromList(json.data.participants);
+      subscribeToRoom(wheelId);
+      log('✅ Joined and subscribed', {
+        participants: json.data.participants?.length,
+        winnerPool:   json.data.winnerPool,
+      }, 'joined');
+    } else {
+      log('Join failed', json, 'error');
+    }
+  }
+
+  async function startWheel() {
+    const wheelId = getWheelId();
+    if (!wheelId) { alert('Enter a Wheel ID first.'); return; }
+    const json = await apiCall('POST', `/api/v1/spinwheel/${wheelId}/start`, null, true);
+    if (json?.success) {
+      setWheelStatus('SPINNING');
+      log('🎡 Wheel started — first elimination in 7s', {}, 'started');
+    } else {
+      log('Start failed', json, 'error');
+    }
+  }
+
+  async function getWheelStatus() {
+    const wheelId = getWheelId();
+    if (!wheelId) { alert('Enter a Wheel ID first.'); return; }
+    const json = await apiCall('GET', `/api/v1/spinwheel/${wheelId}`, null, false);
+    if (json?.data) {
+      setWheelStatus(json.data.status);
+      updatePoolsFromWheel(json.data);
+      loadParticipantsFromList(json.data.participants);
+      log('📊 Status refreshed', { status: json.data.status }, 'info');
+    } else {
+      log('Status fetch failed', json, 'error');
+    }
+  }
+
+  async function refreshPoolsFromAPI() {
+    const wheelId = getWheelId();
+    if (!wheelId) return;
+    const json = await apiCall('GET', `/api/v1/spinwheel/${wheelId}`, null, false);
+    if (json?.data) updatePoolsFromWheel(json.data);
+  }
+
+  // ─── PARTICIPANT DATA ─────────────────────────────────────────────────────
+
+  // Set or update one participant by id
+  function setParticipant(id, displayName, eliminated, winner) {
+    if (participants[id]) {
+      // Keep existing name if new one is worse (id-slice fallback)
+      if (displayName && displayName.length > 6) participants[id].displayName = displayName;
+      participants[id].eliminated = eliminated;
+      participants[id].winner     = winner;
+    } else {
+      participants[id] = { displayName, eliminated, winner };
+    }
+    renderParticipants();
+  }
+
+  // Load full list from the REST response (populated participants array)
+  function loadParticipantsFromList(list) {
+    if (!list || !list.length) return;
+
+    // Preserve winner flags already determined by socket events
+    const prevWinners = Object.entries(participants)
+      .filter(([, p]) => p.winner)
+      .map(([id]) => id);
+
+    participants = {};
+    list.forEach(p => {
+      // Handle both populated shape { userId: { _id, name, email } }
+      // and non-populated shape { userId: "rawId" }
+      const rawId = p.userId?._id || p.userId || '';
+      const id    = rawId.toString();
+      const name  = p.userId?.name  || null;
+      const email = p.userId?.email || null;
+      const display = resolveName(name, email, id);
+
+      participants[id] = {
+        displayName: display,
+        eliminated:  p.isEliminated || false,
+        winner:      prevWinners.includes(id),
+      };
+    });
+
+    renderParticipants();
+  }
+
+  // ─── RENDER ───────────────────────────────────────────────────────────────
+  function renderParticipants() {
+    const grid    = document.getElementById('participantsGrid');
+    const entries = Object.entries(participants);
+
+    if (!entries.length) {
+      grid.innerHTML = '<span style="color:#555;font-size:0.8rem">No participants yet...</span>';
+      document.getElementById('participantCount').textContent = '';
+      return;
+    }
+
+    const winners    = entries.filter(([, p]) =>  p.winner).length;
+    const active     = entries.filter(([, p]) => !p.eliminated && !p.winner).length;
+    const eliminated = entries.filter(([, p]) =>  p.eliminated).length;
+    const total      = entries.length;
+
+    document.getElementById('participantCount').textContent =
+      `(${active} active · ${eliminated} eliminated · ${total} total)`;
+
+    // Sort: winner first → active → eliminated
+    const sorted = [...entries].sort(([, a], [, b]) => {
+      if (a.winner && !b.winner)         return -1;
+      if (!a.winner && b.winner)         return  1;
+      if (!a.eliminated && b.eliminated) return -1;
+      if (a.eliminated && !b.eliminated) return  1;
+      return 0;
+    });
+
+    grid.innerHTML = '';
+    sorted.forEach(([id, p]) => {
+      const name = p.displayName || id.slice(-6);  // ← always use displayName, id-slice only as last resort
+      const chip = document.createElement('div');
+      chip.className = [
+        'participant-chip',
+        p.eliminated ? 'eliminated' : '',
+        p.winner     ? 'winner'     : '',
+      ].filter(Boolean).join(' ');
+      chip.title = `MongoDB ID: ${id}`;
+
+      const avatarContent = p.winner ? '🏆' : getInitials(name);
+
+      chip.innerHTML = `
+        <div class="chip-avatar">${avatarContent}</div>
+        <span class="chip-name">${p.winner ? '🏆 ' : ''}${name}</span>
+        ${p.eliminated ? '<span class="elim-tag">out</span>' : ''}
+      `;
+      grid.appendChild(chip);
+    });
+  }
+
+  // ─── UI HELPERS ───────────────────────────────────────────────────────────
+  function resetGameState() {
+    participants = {};
+    renderParticipants();
+    document.getElementById('winnerPool').textContent   = '0 coins';
+    document.getElementById('adminPool').textContent    = '0 coins';
+    document.getElementById('currentRound').textContent = '—';
+    hideBanner();
+  }
+
+  function setConnectionStatus(connected) {
+    document.getElementById('statusDot').className    = `status-dot ${connected ? 'connected' : ''}`;
+    document.getElementById('statusText').textContent = connected ? 'Connected' : 'Disconnected';
+  }
+
+  function setWheelStatus(status) {
+    const badge = document.getElementById('wheelStatusBadge');
+    badge.className   = `wheel-status status-${status}`;
+    badge.textContent = status;
+  }
+
+  function updatePoolsFromWheel(data) {
+    if (data.winnerPool !== undefined)
+      document.getElementById('winnerPool').textContent = `${data.winnerPool} coins`;
+    if (data.adminPool !== undefined)
+      document.getElementById('adminPool').textContent = `${data.adminPool} coins`;
+  }
+
+  function showBanner(name, prize) {
+    document.getElementById('winnerBannerText').textContent = `🏆 ${name} wins!`;
+    document.getElementById('winnerBannerSub').textContent  = `Prize: ${prize} coins`;
+    const b = document.getElementById('winnerBanner');
+    b.classList.add('show');
+    b.scrollIntoView({ behavior: 'smooth' });
+  }
+
+  function hideBanner() {
+    document.getElementById('winnerBanner').classList.remove('show');
+  }
+</script>
+</body>
+</html>

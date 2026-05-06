@@ -6,11 +6,18 @@ import transactionRoutes from './src/modules/transaction/transaction.routes.js';
 import spinWheelRoutes from './src/modules/spinwheel/spinwheel.routes.js';
 import autoStartQueue from './src/queues/autostart.queue.js';
 import eliminationQueue from './src/queues/elimination.queue.js';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = dirname(__filename);
 
 const app = express();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+app.use(express.static(join(__dirname, 'public')));
 
 // Request logging middleware
 app.use((req, res, next) => {
